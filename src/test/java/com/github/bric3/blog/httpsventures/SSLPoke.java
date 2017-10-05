@@ -24,8 +24,9 @@ public class SSLPoke {
         String host = args[0];
         int port = Integer.parseInt(args[1]);
         System.out.println(host + ":" + port);
-        my_poke(host, port);
+//        my_poke(host, port);
 //        original_poke(args[0], Integer.parseInt(args[1]));
+        original_poke_with_trust_all(args[0], Integer.parseInt(args[1]));
     }
 
     private static void my_poke(String host, int port) {
@@ -75,6 +76,27 @@ public class SSLPoke {
     private static void original_poke(String host, int port) {
         try {
             SSLSocketFactory sslsocketfactory = (SSLSocketFactory) SSLSocketFactory.getDefault();
+            SSLSocket sslsocket = (SSLSocket) sslsocketfactory.createSocket(host, port);
+
+            InputStream in = sslsocket.getInputStream();
+            OutputStream out = sslsocket.getOutputStream();
+
+            // Write a test byte to get a reaction :)
+            out.write(1);
+
+            while (in.available() > 0) {
+                System.out.print(in.read());
+            }
+            System.out.println("Successfully connected");
+
+        } catch (Exception exception) {
+            exception.printStackTrace();
+        }
+    }
+
+    private static void original_poke_with_trust_all(String host, int port) {
+        try {
+            SSLSocketFactory sslsocketfactory = HttpClients.trustAllSslContext().getSocketFactory();
             SSLSocket sslsocket = (SSLSocket) sslsocketfactory.createSocket(host, port);
 
             InputStream in = sslsocket.getInputStream();

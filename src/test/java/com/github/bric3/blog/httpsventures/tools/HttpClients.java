@@ -1,5 +1,10 @@
 package com.github.bric3.blog.httpsventures.tools;
 
+import okhttp3.Authenticator;
+import okhttp3.OkHttpClient;
+import okhttp3.Response;
+
+import javax.net.ssl.HostnameVerifier;
 import javax.net.ssl.KeyManager;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManager;
@@ -19,12 +24,9 @@ import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.util.Arrays;
 import java.util.Optional;
-import okhttp3.Authenticator;
-import okhttp3.OkHttpClient;
-import okhttp3.Response;
 
-import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static com.github.bric3.blog.httpsventures.tools.DebugDetector.debugging;
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
 public class HttpClients {
 
@@ -65,8 +67,6 @@ public class HttpClients {
     }
 
 
-
-
 //    private static X509KeyManager jksKeyManager(Path path, char[] pazzwort) {
 //        try (InputStream fis = Files.newInputStream(path)) {
 //            KeyStore jks = KeyStore.getInstance("JKS");
@@ -89,11 +89,11 @@ public class HttpClients {
 //        }
 //    }
 
-    private static SSLContext trustAllSslContext() {
+    public static SSLContext trustAllSslContext() {
         try {
             SSLContext sslContext = SSLContext.getInstance("TLS");
             sslContext.init(null,
-                            TrustAllX509TrustManager.singleInstanceTrustManagerArray(),
+                            TrustAllX509TrustManager.ARRAY_INSTANCE,
                             null);
             return sslContext;
         } catch (NoSuchAlgorithmException | KeyManagementException e) {
@@ -101,15 +101,28 @@ public class HttpClients {
         }
     }
 
-    public static TrustManager systemTrustManager() throws NoSuchAlgorithmException, KeyStoreException {
-        TrustManagerFactory trustManagerFactory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-        trustManagerFactory.init((KeyStore) null);
-        TrustManager[] trustManagers = trustManagerFactory.getTrustManagers();
+
+    public static X509TrustManager systemTrustManager() {
+        TrustManager[] trustManagers = systemTrustManagerFactory().getTrustManagers();
         if (trustManagers.length != 1) {
             throw new IllegalStateException("Unexpected default trust managers:"
                                             + Arrays.toString(trustManagers));
         }
-        return trustManagers[0];
+        TrustManager trustManager = trustManagers[0];
+        if (trustManager instanceof X509TrustManager) {
+            return (X509TrustManager) trustManager;
+        }
+        throw new IllegalStateException("'" + trustManager + "' is not a X509TrustManager");
+    }
+
+    private static TrustManagerFactory systemTrustManagerFactory() {
+        try {
+            TrustManagerFactory trustManagerFactory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+            trustManagerFactory.init((KeyStore) null);
+            return trustManagerFactory;
+        } catch (NoSuchAlgorithmException | KeyStoreException e) {
+            throw new IllegalStateException("Can't load default trust manager algorithm", e);
+        }
     }
 
     public static OkHttpClient simpleHttpClient() {
@@ -123,11 +136,16 @@ public class HttpClients {
     public static OkHttpClient trustAllAuthenticatingClient(Authenticator authenticator) {
         return new OkHttpClient.Builder()
                 .sslSocketFactory(trustAllSslContext().getSocketFactory(), TrustAllX509TrustManager.INSTANCE)
+                .hostnameVerifier(allowAllHostname())
                 .authenticator(authenticator)
                 .connectTimeout(debugging() ? 0 : 10_000, MILLISECONDS)
                 .readTimeout(debugging() ? 0 : 10_000, MILLISECONDS)
                 .writeTimeout(debugging() ? 0 : 10_000, MILLISECONDS)
                 .build();
+    }
+
+    public static HostnameVerifier allowAllHostname() {
+        return (hostname, sslSession) -> true;
     }
 
     public abstract static class AlternateTrustManager implements TrustManager {
@@ -153,7 +171,7 @@ public class HttpClients {
         }
 
         static KeyStore readJavaKeyStore(Path javaKeyStorePath, String password) {
-            try(InputStream inputStream = new BufferedInputStream(Files.newInputStream(javaKeyStorePath))) {
+            try (InputStream inputStream = new BufferedInputStream(Files.newInputStream(javaKeyStorePath))) {
                 KeyStore ks = KeyStore.getInstance("JKS");
                 ks.load(inputStream, password.toCharArray());
                 return ks;
@@ -166,8 +184,9 @@ public class HttpClients {
 
     }
 
-    private static class TrustAllX509TrustManager implements X509TrustManager {
-        public static final TrustAllX509TrustManager INSTANCE = new TrustAllX509TrustManager();
+    public static class TrustAllX509TrustManager implements X509TrustManager {
+        public static final X509TrustManager INSTANCE = new TrustAllX509TrustManager();
+        public static final X509TrustManager[] ARRAY_INSTANCE = new X509TrustManager[]{INSTANCE};
 
         private TrustAllX509TrustManager() {
         }
@@ -184,9 +203,39 @@ public class HttpClients {
         public X509Certificate[] getAcceptedIssuers() {
             return new X509Certificate[0];
         }
+    }
 
-        public static TrustManager[] singleInstanceTrustManagerArray() {
-            return new TrustManager[]{INSTANCE};
+    public static class TrustSelfSignedX509TrustManager implements X509TrustManager {
+        private X509TrustManager delegate;
+
+        private TrustSelfSignedX509TrustManager(X509TrustManager delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public void checkClientTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+            delegate.checkClientTrusted(chain, authType);
+        }
+
+        @Override
+        public void checkServerTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+            if (isSelfSigned(chain)) {
+                return;
+            }
+            delegate.checkServerTrusted(chain, authType);
+        }
+
+        private boolean isSelfSigned(X509Certificate[] chain) {
+            return chain.length == 1;
+        }
+
+        @Override
+        public X509Certificate[] getAcceptedIssuers() {
+            return delegate.getAcceptedIssuers();
+        }
+
+        public static X509TrustManager wrap(X509TrustManager trustManager) {
+            return new TrustSelfSignedX509TrustManager(trustManager);
         }
     }
 

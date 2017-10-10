@@ -50,7 +50,7 @@ public class SSLPoke {
 
             SSLContext sslContext = HttpClients.sslContext(null,
                                                            new TrustManager[]{
-                                                                   HttpClients.AlternateTrustManager.trustManager(Paths.get("/Users/brice/work/renault/shield-oauth-plugin/renault-internal-chain-truststore.jks"), "changeit"),
+                                                                   HttpClients.AlternateTrustManager.trustManagerFor(HttpClients.AlternateTrustManager.readJavaKeyStore(Paths.get("/Users/brice/work/renault/shield-oauth-plugin/renault-internal-chain-truststore.jks"), "changeit")),
                                                                    HttpClients.systemTrustManager(),
                                                                    });
 

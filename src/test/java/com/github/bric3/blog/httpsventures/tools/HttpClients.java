@@ -4,12 +4,7 @@ import okhttp3.Authenticator;
 import okhttp3.OkHttpClient;
 import okhttp3.Response;
 
-import javax.net.ssl.HostnameVerifier;
-import javax.net.ssl.KeyManager;
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.TrustManager;
-import javax.net.ssl.TrustManagerFactory;
-import javax.net.ssl.X509TrustManager;
+import javax.net.ssl.*;
 import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -34,20 +29,15 @@ public class HttpClients {
     public static final String AUTHORIZATION_HEADER = "Authorization";
 
     public static OkHttpClient trustAllHttpClient() {
-
         // Create an ssl socket context with our all-trusting manager
-
-        return new OkHttpClient.Builder()
-                .sslSocketFactory(trustAllSslContext().getSocketFactory(), TrustAllX509TrustManager.INSTANCE)
-                .connectTimeout(debugging() ? 0 : 10_000, MILLISECONDS)
-                .readTimeout(debugging() ? 0 : 10_000, MILLISECONDS)
-                .writeTimeout(debugging() ? 0 : 10_000, MILLISECONDS)
-                .build();
+        return httpClient(sslContext(null,
+                                     TrustAllX509TrustManager.ARRAY_INSTANCE),
+                          TrustAllX509TrustManager.INSTANCE);
     }
 
-    public static OkHttpClient httpClient(SSLContext sslContext) {
+    public static OkHttpClient httpClient(SSLContext sslContext, X509TrustManager trustManager) {
         return new OkHttpClient.Builder()
-                .sslSocketFactory(sslContext.getSocketFactory())
+                .sslSocketFactory(sslContext.getSocketFactory(), trustManager)
                 .connectTimeout(debugging() ? 0 : 10_000, MILLISECONDS)
                 .readTimeout(debugging() ? 0 : 10_000, MILLISECONDS)
                 .writeTimeout(debugging() ? 0 : 10_000, MILLISECONDS)
@@ -106,7 +96,7 @@ public class HttpClients {
         TrustManager[] trustManagers = systemTrustManagerFactory().getTrustManagers();
         if (trustManagers.length != 1) {
             throw new IllegalStateException("Unexpected default trust managers:"
-                                            + Arrays.toString(trustManagers));
+                                                    + Arrays.toString(trustManagers));
         }
         TrustManager trustManager = trustManagers[0];
         if (trustManager instanceof X509TrustManager) {
@@ -117,11 +107,11 @@ public class HttpClients {
 
     private static TrustManagerFactory systemTrustManagerFactory() {
         try {
-            TrustManagerFactory trustManagerFactory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-            trustManagerFactory.init((KeyStore) null);
-            return trustManagerFactory;
+            TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+            tmf.init((KeyStore) null);
+            return tmf;
         } catch (NoSuchAlgorithmException | KeyStoreException e) {
-            throw new IllegalStateException("Can't load default trust manager algorithm", e);
+            throw new IllegalStateException("Can't load default trust manager", e);
         }
     }
 
@@ -148,31 +138,64 @@ public class HttpClients {
         return (hostname, sslSession) -> true;
     }
 
-    public abstract static class AlternateTrustManager implements TrustManager {
-        public static TrustManager[] singleAlternateTrustManagerAsArray(Path javaKeyStorePath, String password) {
-            return new TrustManager[]{trustManager(javaKeyStorePath, password)};
+    public static X509TrustManager from(Path javaKeyStore, char[] password) {
+        // Read the given trustStore (stored in a Java KeyStore format, JKS)
+        try (InputStream inputStream = new BufferedInputStream(Files.newInputStream(javaKeyStore))) {
+            KeyStore ks = KeyStore.getInstance(KeyStore.getDefaultType());
+            ks.load(inputStream, password);
+
+            TrustManagerFactory trustManagerFactory = TrustManagerFactory.getInstance(
+                    TrustManagerFactory.getDefaultAlgorithm());
+
+            trustManagerFactory.init(ks);
+
+
+            TrustManager[] trustManagers = trustManagerFactory.getTrustManagers();
+            if (trustManagers.length != 1) {
+                throw new IllegalStateException("Unexpected number of trust managers:"
+                                                        + Arrays.toString(trustManagers));
+            }
+            return (X509TrustManager) trustManagers[0];
+        } catch (IOException e) {
+            throw new IllegalStateException("Couldn't init load key store", e);
+        } catch (CertificateException | NoSuchAlgorithmException | KeyStoreException e) {
+            throw new IllegalStateException("Couldn't init trust store", e);
+        }
+    }
+
+    public abstract static class AlternateTrustManager implements X509TrustManager {
+        public static X509TrustManager trustManagerFor(Path javaKeyStorePath, String password) {
+            return trustManagerFor(readJavaKeyStore(javaKeyStorePath, password));
         }
 
-        public static TrustManager trustManager(Path javaKeyStorePath, String password) {
-            try {
-                KeyStore keyStore = readJavaKeyStore(javaKeyStorePath, password);
-                TrustManagerFactory trustManagerFactory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-                trustManagerFactory.init(keyStore);
+        public static X509TrustManager trustManagerFor(KeyStore keyStore) {
+            TrustManagerFactory tmf = trustManagerFactoryFor(keyStore);
 
-                TrustManager[] trustManagers = trustManagerFactory.getTrustManagers();
-                if (trustManagers.length != 1) {
-                    throw new IllegalStateException("Unexpected number of trust managers:"
-                                                    + Arrays.toString(trustManagers));
-                }
-                return trustManagers[0];
-            } catch (NoSuchAlgorithmException | KeyStoreException e) {
-                throw new IllegalStateException(e);
+            TrustManager[] trustManagers = tmf.getTrustManagers();
+            if (trustManagers.length != 1) {
+                throw new IllegalStateException("Unexpected number of trust managers:"
+                                                        + Arrays.toString(trustManagers));
+            }
+            TrustManager trustManager = trustManagers[0];
+            if (trustManager instanceof X509TrustManager) {
+                return (X509TrustManager) trustManager;
+            }
+            throw new IllegalStateException("'" + trustManager + "' is not a X509TrustManager");
+        }
+
+        private static TrustManagerFactory trustManagerFactoryFor(KeyStore keyStore) {
+            try {
+                TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+                tmf.init(keyStore);
+                return tmf;
+            } catch (KeyStoreException | NoSuchAlgorithmException e) {
+                throw new IllegalStateException("Can't load trust manager for keystore : " + keyStore, e);
             }
         }
 
-        static KeyStore readJavaKeyStore(Path javaKeyStorePath, String password) {
+        public static KeyStore readJavaKeyStore(Path javaKeyStorePath, String password) {
             try (InputStream inputStream = new BufferedInputStream(Files.newInputStream(javaKeyStorePath))) {
-                KeyStore ks = KeyStore.getInstance("JKS");
+                KeyStore ks = KeyStore.getInstance(KeyStore.getDefaultType());
                 ks.load(inputStream, password.toCharArray());
                 return ks;
             } catch (IOException e) {

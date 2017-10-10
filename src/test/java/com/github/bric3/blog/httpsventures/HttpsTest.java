@@ -1,52 +1,77 @@
 package com.github.bric3.blog.httpsventures;
 
-import java.io.IOException;
 import com.github.bric3.blog.httpsventures.tools.HttpClients;
 import com.github.tomakehurst.wiremock.junit.WireMockRule;
 import okhttp3.Request;
 import okhttp3.Response;
+import org.assertj.core.api.Assertions;
 import org.junit.Rule;
 import org.junit.Test;
 
-import static java.lang.String.format;
+import javax.net.ssl.SSLHandshakeException;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
+import java.io.IOException;
+import java.nio.file.Paths;
+
+import static com.github.bric3.blog.httpsventures.tools.HttpClients.*;
 import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMockConfig;
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.fail;
+import static java.lang.String.format;
 
 public class HttpsTest {
 
     @Rule
     public WireMockRule wireMockRule = new WireMockRule(wireMockConfig().dynamicPort()
-                                                                        .dynamicHttpsPort()
-                                                                        .disableRequestJournal());
+                                                                        .dynamicHttpsPort());
 
     @Test
-    public void connect_ssl_server_with_custom_certificate() {
-        try (Response response = HttpClients.simpleHttpClient()
-                                            .newCall(new Request.Builder().get().url(
-                                                    format("https://%s:%d",
-                                                           "localhost",
-                                                           wireMockRule.httpsPort()
-                                                    )).build())
-                                            .execute()) {
+    public void connect_ssl_server_with_self_signed_certificate_will_fail() {
+        try (Response response = simpleHttpClient().newCall(new Request.Builder().get()
+                                                                                 .url(format("https://%s:%d",
+                                                                                             "localhost",
+                                                                                             wireMockRule.httpsPort()))
+                                                                                 .build())
+                                                   .execute()) {
             // won't work anyway
         } catch (IOException e) {
-            fail(e.toString());
+            Assertions.assertThat(e).isInstanceOf(SSLHandshakeException.class);
+        }
+
+    }
+
+    @Test
+    public void connect_ssl_server_with_self_signed_certificate_using_trust_all() throws IOException {
+        try (Response response = trustAllHttpClient().newBuilder()
+                                                     .hostnameVerifier(HttpClients.allowAllHostname())
+                                                     .build()
+                                                     .newCall(new Request.Builder().get()
+                                                                                   .url(format("https://%s:%d",
+                                                                                               "localhost",
+                                                                                               wireMockRule.httpsPort()
+                                                                                              ))
+                                                                                   .build())
+                                                     .execute()) {
+            // successfully established connection
         }
     }
 
     @Test
-    public void connect_ssl_server_with_custom_certificate_using_trust_all() {
-        try (Response response = HttpClients.trustAllHttpClient()
-                                            .newCall(new Request.Builder().get().url(
-                                                    format("https://%s:%d",
-                                                           "localhost",
-                                                           wireMockRule.httpsPort()
-                                                    )).build())
-                                            .execute()) {
-            assertThat(response.code()).isEqualTo(200);
-        } catch (IOException e) {
-            fail(e.toString());
+    public void connect_ssl_server_with_self_signed_certificate_loading_an_external_truststore() throws IOException {
+        X509TrustManager customTrustManager = AlternateTrustManager.trustManagerFor(AlternateTrustManager.readJavaKeyStore(Paths.get("./wiremock-truststore.jks"), "changeit"));
+        try (Response response = httpClient(sslContext(null,
+                                                       new TrustManager[] { customTrustManager }),
+                                            customTrustManager)
+                .newBuilder()
+                .hostnameVerifier(HttpClients.allowAllHostname())
+                .build()
+                .newCall(new Request.Builder().get().url(
+                        format("https://%s:%d",
+                               "localhost",
+                               wireMockRule.httpsPort()
+                              )).build())
+                .execute()) {
+            // successfully established connection
         }
     }
+
 }

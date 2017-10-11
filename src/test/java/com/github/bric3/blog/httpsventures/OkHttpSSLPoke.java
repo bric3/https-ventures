@@ -4,7 +4,6 @@ import com.github.bric3.blog.httpsventures.tools.HttpClients.AlternateTrustManag
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 
-import javax.net.ssl.TrustManager;
 import javax.net.ssl.X509TrustManager;
 import java.io.IOException;
 import java.nio.file.Paths;
@@ -61,7 +60,7 @@ public class OkHttpSSLPoke {
 
     private static void okhttp_poke_load_certificate(String host, int port) {
         try {
-            X509TrustManager trustManager = AlternateTrustManager.trustManagerFor(AlternateTrustManager.makeJavaKeyStore(Paths.get("./wiremock.der"), "changeit"));
+            X509TrustManager trustManager = AlternateTrustManager.trustManagerFor(AlternateTrustManager.makeJavaKeyStore(Paths.get("./wiremock.der")));
             new OkHttpClient.Builder()
                     .sslSocketFactory(sslContext(null, new X509TrustManager[]{trustManager}).getSocketFactory(),
                                       trustManager)

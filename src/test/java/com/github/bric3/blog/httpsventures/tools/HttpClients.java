@@ -16,17 +16,17 @@ import java.security.KeyManagementException;
 import java.security.KeyStore;
 import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
-import java.security.cert.Certificate;
 import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 import static com.github.bric3.blog.httpsventures.tools.DebugDetector.debugging;
+import static com.github.bric3.blog.httpsventures.tools.MultiException.Mode.UNLESS_ANY_SUCCESS;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
 public class HttpClients {
@@ -61,29 +61,6 @@ public class HttpClients {
             throw new IllegalStateException("Couldn't init TLS context", e);
         }
     }
-
-
-//    private static X509KeyManager jksKeyManager(Path path, char[] pazzwort) {
-//        try (InputStream fis = Files.newInputStream(path)) {
-//            KeyStore jks = KeyStore.getInstance("JKS");
-//            jks.load(fis, pazzwort);
-//
-//            KeyManagerFactory sunX509keyManager = KeyManagerFactory.getInstance("SunX509");
-//            sunX509keyManager.init(jks, pazzwort);
-//
-//            KeyManager[] keyManagers = sunX509keyManager.getKeyManagers();
-//            if (keyManagers.length != 1 || !(keyManagers[0] instanceof X509KeyManager)) {
-//                throw new IllegalStateException("Unexpected default key managers:"
-//                                                + Arrays.toString(keyManagers));
-//            }
-//            return (X509KeyManager) keyManagers[0];
-//        } catch (IOException e) {
-//            throw new UncheckedIOException(e);
-//        } catch (CertificateException | NoSuchAlgorithmException | KeyStoreException | UnrecoverableKeyException e) {
-//            throw new IllegalStateException("Couldn't init TLS with custom trust store '"
-//                                            + path + "' and system trust manager", e);
-//        }
-//    }
 
     public static SSLContext trustAllSslContext() {
         try {
@@ -211,7 +188,7 @@ public class HttpClients {
             }
         }
 
-        public static KeyStore makeJavaKeyStore(Path pemCertificatePath, String password) {
+        public static KeyStore makeJavaKeyStore(Path pemCertificatePath) {
             try (BufferedInputStream bis = new BufferedInputStream(Files.newInputStream(pemCertificatePath))) {
                 CertificateFactory cf = CertificateFactory.getInstance("X.509");
 
@@ -288,6 +265,38 @@ public class HttpClients {
 
         public static X509TrustManager wrap(X509TrustManager trustManager) {
             return new TrustSelfSignedX509TrustManager(trustManager);
+        }
+    }
+
+    public static class CompositeX509TrustManager implements X509TrustManager {
+        private final List<X509TrustManager> trustManagers;
+
+        public CompositeX509TrustManager(X509TrustManager... trustManagers) {
+            this.trustManagers = Arrays.asList(trustManagers);
+        }
+
+        @Override
+        public void checkClientTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+            new MultiException<>(new CertificateException("This certification chain couldn't be trusted"))
+                    .collectFrom(trustManagers.stream(),
+                                 trustManager -> trustManager.checkClientTrusted(chain, authType))
+                    .scream(UNLESS_ANY_SUCCESS);
+        }
+
+        @Override
+        public void checkServerTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+            new MultiException<>(new CertificateException("This certification chain couldn't be trusted"))
+                    .collectFrom(trustManagers.stream(),
+                                 trustManager -> trustManager.checkServerTrusted(chain, authType))
+                    .scream(UNLESS_ANY_SUCCESS);
+        }
+
+        @Override
+        public X509Certificate[] getAcceptedIssuers() {
+            return trustManagers.stream()
+                                .map(X509TrustManager::getAcceptedIssuers)
+                                .flatMap(Arrays::stream)
+                                .toArray(X509Certificate[]::new);
         }
     }
 

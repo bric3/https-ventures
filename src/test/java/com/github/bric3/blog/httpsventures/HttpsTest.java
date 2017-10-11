@@ -74,4 +74,23 @@ public class HttpsTest {
         }
     }
 
+
+    @Test
+    public void connect_ssl_server_with_self_signed_certificate_loading_an_external_certificate() throws IOException {
+        X509TrustManager customTrustManager = AlternateTrustManager.trustManagerFor(AlternateTrustManager.makeJavaKeyStore(Paths.get("./wiremock.pem"), "changeit"));
+        try (Response response = httpClient(sslContext(null,
+                                                       new TrustManager[] { customTrustManager }),
+                                            customTrustManager)
+                .newBuilder()
+                .hostnameVerifier(HttpClients.allowAllHostname())
+                .build()
+                .newCall(new Request.Builder().get().url(
+                        format("https://%s:%d",
+                               "localhost",
+                               wireMockRule.httpsPort()
+                              )).build())
+                .execute()) {
+            // successfully established connection
+        }
+    }
 }

@@ -5,6 +5,7 @@ import okhttp3.OkHttpClient;
 import okhttp3.Response;
 
 import javax.net.ssl.*;
+import javax.security.auth.x500.X500Principal;
 import java.io.BufferedInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -15,10 +16,15 @@ import java.security.KeyManagementException;
 import java.security.KeyStore;
 import java.security.KeyStoreException;
 import java.security.NoSuchAlgorithmException;
+import java.security.cert.Certificate;
 import java.security.cert.CertificateException;
+import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Optional;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import static com.github.bric3.blog.httpsventures.tools.DebugDetector.debugging;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
@@ -201,10 +207,33 @@ public class HttpClients {
             } catch (IOException e) {
                 throw new UncheckedIOException(e);
             } catch (CertificateException | NoSuchAlgorithmException | KeyStoreException e) {
-                throw new IllegalStateException(e);
+                throw new IllegalStateException("Can't load the keystore : " + javaKeyStorePath, e);
             }
         }
 
+        public static KeyStore makeJavaKeyStore(Path pemCertificatePath, String password) {
+            try (BufferedInputStream bis = new BufferedInputStream(Files.newInputStream(pemCertificatePath))) {
+                CertificateFactory cf = CertificateFactory.getInstance("X.509");
+
+                KeyStore ks = KeyStore.getInstance(KeyStore.getDefaultType());
+                ks.load(null, null);
+                int certificate_counter = 0;
+                for (X509Certificate certificate : (Collection<X509Certificate>) cf.generateCertificates(bis)) {
+                    ks.setCertificateEntry(Pattern.compile(",\\s*").splitAsStream(certificate.getIssuerX500Principal().getName(X500Principal.CANONICAL))
+                                                  .filter(property -> property.equalsIgnoreCase("cn"))
+                                                  .findFirst().orElse("cert_" + certificate_counter++),
+                                           certificate);
+                }
+
+                return ks;
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            } catch (CertificateException e) {
+                throw new IllegalStateException("Can't load certificate : " + pemCertificatePath, e);
+            } catch (KeyStoreException | NoSuchAlgorithmException e) {
+                throw new IllegalStateException("Can't create the internal keystore for certificate : " + pemCertificatePath, e);
+            }
+        }
     }
 
     public static class TrustAllX509TrustManager implements X509TrustManager {

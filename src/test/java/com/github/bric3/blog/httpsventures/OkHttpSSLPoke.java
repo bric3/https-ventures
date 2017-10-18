@@ -19,8 +19,8 @@ public class OkHttpSSLPoke {
         }
 
         okhttp_poke(args[0], Integer.parseInt(args[1]));
-        okhttp_poke_load_keystore(args[0], Integer.parseInt(args[1]));
-        okhttp_poke_load_certificate(args[0], Integer.parseInt(args[1]));
+        okhttp_poke_load_keystore(args[0], Integer.parseInt(args[1]), "./wiremock-truststore.jks", "changeit");
+        okhttp_poke_load_certificate(args[0], Integer.parseInt(args[1]), "./wiremock.der");
     }
 
     private static void okhttp_poke(String host, int port) {
@@ -39,9 +39,9 @@ public class OkHttpSSLPoke {
     }
 
 
-    private static void okhttp_poke_load_keystore(String host, int port) {
+    private static void okhttp_poke_load_keystore(String host, int port, String trustStorePath, String password) {
         try {
-            X509TrustManager trustManager = AlternateTrustManager.trustManagerFor(AlternateTrustManager.readJavaKeyStore(Paths.get("./wiremock-truststore.jks"), "changeit"));
+            X509TrustManager trustManager = AlternateTrustManager.trustManagerFor(AlternateTrustManager.readJavaKeyStore(Paths.get(trustStorePath), password));
             new OkHttpClient.Builder()
                     .sslSocketFactory(sslContext(null, new X509TrustManager[]{trustManager}).getSocketFactory(),
                                       trustManager)
@@ -58,9 +58,9 @@ public class OkHttpSSLPoke {
         }
     }
 
-    private static void okhttp_poke_load_certificate(String host, int port) {
+    private static void okhttp_poke_load_certificate(String host, int port, String certificatePath) {
         try {
-            X509TrustManager trustManager = AlternateTrustManager.trustManagerFor(AlternateTrustManager.makeJavaKeyStore(Paths.get("./wiremock.der")));
+            X509TrustManager trustManager = AlternateTrustManager.trustManagerFor(AlternateTrustManager.makeJavaKeyStore(Paths.get(certificatePath)));
             new OkHttpClient.Builder()
                     .sslSocketFactory(sslContext(null, new X509TrustManager[]{trustManager}).getSocketFactory(),
                                       trustManager)

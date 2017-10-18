@@ -177,8 +177,16 @@ public class HttpClients {
         }
 
         public static KeyStore readJavaKeyStore(Path javaKeyStorePath, String password) {
+            return readKeyStore(KeyStore.getDefaultType(), javaKeyStorePath, password);
+        }
+
+        public static KeyStore readPKCS12(Path javaKeyStorePath, String password) {
+            return readKeyStore("PKCS12", javaKeyStorePath, password);
+        }
+
+        private static KeyStore readKeyStore(String keyStoreType, Path javaKeyStorePath, String password) {
             try (InputStream inputStream = new BufferedInputStream(Files.newInputStream(javaKeyStorePath))) {
-                KeyStore ks = KeyStore.getInstance(KeyStore.getDefaultType());
+                KeyStore ks = KeyStore.getInstance(keyStoreType);
                 ks.load(inputStream, password.toCharArray());
                 return ks;
             } catch (IOException e) {
